@@ -39,7 +39,7 @@ for i=1:numel(varargin{1})
         switch opts(i).transformation
             case 'none'
                 tfs = [.5 ; .5 ; 0 ];
-            case 'f2'
+            case 'f1'
                 tfs = [...
                     0.5 0.5 ;
                     0.5 0.5 ;
@@ -74,8 +74,6 @@ for i=1:numel(varargin{1})
         else
             rgbjitt = [];
         end
-        
-        
         
         % fetch is true if images is a list of filenames (instead of
         % a cell array of images)

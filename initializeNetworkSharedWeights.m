@@ -187,7 +187,7 @@ net.meta.classes.name = imdb.classes.name;
 net.meta.classes.description = imdb.classes.name;
 
 % add border for translation data jittering
-if(~strcmp(opts.dataAugmentation{1}, 'f2') && ~strcmp(opts.dataAugmentation{1}, 'none'))
+if(~strcmp(opts.dataAugmentation{1}, 'f1') && ~strcmp(opts.dataAugmentation{1}, 'none'))
     net.meta.normalization.border = 256 - net.meta.normalization.imageSize(1:2) ;
 end
 

@@ -16,12 +16,17 @@ labels = reshape(repmat(labels, numAugments, 1), 1, size(im{1},4));
 
 if nargout > 0
   if useGpu
-    im1 = gpuArray(im{1}) ;
-    im2 = gpuArray(im{2}) ;
-  else
-      im1 = im{1};
-      im2 = im{2};
+      for i=1:numel(im)
+          im{i} = gpuArray(im{i}) ;
+      end
   end
-  inputs = {'input', im1, 'netb_input', im2, 'label', labels} ;
+  if numel(im) == 1
+      inputs = {'input', im{1}} ;
+  else
+      inputs = {'input', im{1}, 'netb_input', im{2}} ;
+  end
+
+  inputs{end+1} = 'label';
+  inputs{end+1} = labels;
 end
 

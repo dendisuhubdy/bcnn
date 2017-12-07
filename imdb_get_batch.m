@@ -4,7 +4,7 @@ function imo = imdb_get_batch(images, varargin)
 opts.imageSize = [227, 227] ;
 opts.border = [29, 29] ;
 opts.averageImage = [] ;
-opts.augmentation = 'f2' ;
+opts.augmentation = 'f1' ;
 opts.interpolation = 'bilinear' ;
 opts.numAugments = 1 ;
 opts.numThreads = 0 ;
@@ -23,7 +23,7 @@ prefetch = fetch & opts.prefetch ;
 switch opts.augmentation
   case 'none'
     tfs = [.5 ; .5 ; 0 ];
-  case 'f2'
+  case 'f1'
     tfs = [...
 	0.5 0.5 ;
 	0.5 0.5 ;
