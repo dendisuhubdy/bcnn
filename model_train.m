@@ -33,7 +33,8 @@ if ~exist(opts.resultPath)
           imdb, imdb.images.id(train), ...
           opts.encoders{i}.opts{:}, ...
           'useGpu', opts.useGpu, ...
-          'scale', opts.imgScale) ;
+          'scale', opts.imgScale, ...
+          'border', opts.border) ;
         encoder_save(encoder, opts.encoders{i}.path) ;
       end
       code = encoder_extract_for_images(encoder, imdb, imdb.images.id, 'dataAugmentation', opts.dataAugmentation, 'scale', opts.imgScale) ;
@@ -91,7 +92,7 @@ verificationTask = isfield(imdb, 'pairs');
 switch opts.dataAugmentation
     case 'none'
         ts =1 ;
-    case 'f2'
+    case 'f1'
         ts = 2;
     otherwise
         error('not supported data augmentation')
@@ -214,7 +215,7 @@ batches = mat2cell(1:numel(imageIds), 1, [opts.batchSize * ones(1, n-1), numel(i
 batchResults = cell(1, numel(batches)) ;
 
 % just use as many workers as are already available
-numWorkers = matlabpool('size') ;
+% numWorkers = matlabpool('size') ;
 %parfor (b = 1:numel(batches), numWorkers)
 for b = numel(batches):-1:1
   batchResults{b} = get_batch_results(imdb, imageIds, batches{b}, ...
@@ -225,7 +226,7 @@ end
 switch opts.dataAugmentation
     case 'none'
         ts = 1;
-    case 'f2'
+    case 'f1'
         ts = 2;
     otherwise
         error('not supported data augmentation')
@@ -260,7 +261,7 @@ if ~isempty(task), tid = task.ID ; else tid = 1 ; end
 switch dataAugmentation
     case 'none'
         tfs = [0 ; 0 ; 0 ];
-    case 'f2'
+    case 'f1'
         tfs = [...
             0   0 ;
             0   0 ;
@@ -313,6 +314,10 @@ switch encoder.type
             'maxNumLocalDescriptorsReturned', maxn) ;
     case 'bcnn'
         code_ = get_bcnn_features(encoder.net, im, 'scales', scale);
+    case 'impbcnn'
+        code_ = get_rcnn_features(encoder.net, ...
+            im, ...
+            'regionBorder', encoder.regionBorder, 'scales', scale) ;
 end
 result.code = code_ ;
 
@@ -337,6 +342,12 @@ opts.numWords = 64 ;
 opts.numSpatialSubdivisions = 1 ;
 opts.normalization = 'sqrt_L2';
 opts.scale = 1;
+opts.method = 'schulz';
+opts.bpMethod = 'svd';
+opts.sigma = 1;
+opts.pow = 0.5;
+opts.border = [0, 0];
+opts.maxIter = 5;
 opts = vl_argparse(opts, varargin) ;
 
 encoder.type = opts.type ;
@@ -364,7 +375,7 @@ switch opts.type
             encoder.net.useGpu = false ;
         end
    case 'bcnn'
-       encoder.normalization = opts.normalization;
+        encoder.normalization = opts.normalization;
         encoder.neta = load(opts.modela);
         if isfield(encoder.neta, 'net')
             encoder.neta = encoder.neta.net;
@@ -410,10 +421,122 @@ switch opts.type
                 encoder.net.useGpu = true;
             end
         end        
+    case 'impbcnn'
+        encoder.net = load(opts.model);
+        encoder.sigma = opts.sigma;
+        encoder.maxIter = opts.maxIter; 
+        % resolve the inconsistent saving format of network
+        if isfield(encoder.net, 'net')
+            encoder.net = encoder.net.net;
+        end
+        
+        % resolve the inconsistent saving format of meta
+        if isa(encoder.net, 'dagnn.DagNN')
+            if ~isprop(encoder.net, 'meta')
+                encoder.net.meta.normalization = encoder.net.normalization;
+            end
+        else
+            if ~isfield(encoder.net, 'meta')
+                encoder.net.meta.normalization = encoder.net.normalization;
+                encoder.net = rmfield(encoder.net, 'normalization');
+            end
+        end
+
+        % resolve the inconsistent saving format of averageImage
+        if size(encoder.net.meta.normalization.averageImage, 3) ~= 3
+            encoder.net.meta.normalization.averageImage = reshape(...
+                    encoder.net.meta.normalization.averageImage, [1, 1, 3]);
+        end
+
+
+        % create the Dag object if the network is in Dag format
+        if isfield(encoder.net, 'params')
+            encoder.net = dagnn.DagNN.loadobj(encoder.net);
+            inputName = encoder.net.getInputs();
+            if ~strcmp(inputName, 'input')
+                encoder.net.renameVar(inputName, 'input');
+            end
+        end
+
+        % check if network is a Dag
+        isDag = isa(encoder.net, 'dagnn.DagNN');
+
+        % covert the network to a Dag if it is not
+        if ~isDag
+            encoder.net.layers = encoder.net.layers(1:opts.layer);
+            encoder.net = dagnn.DagNN.fromSimpleNN(encoder.net, 'canonicalNames', true);
+        end
+
+        % Truncate the neta at layera
+        if ~isempty(opts.layer)
+            maxLayer = opts.layer;
+
+            % remove the layers not required for computing the output of
+            % layera
+            executeOrder = encoder.net.getLayerExecutionOrder();
+            maxIndex = find(executeOrder == maxLayer);
+            removeIdx = executeOrder(maxIndex+1:end);
+            removeName = {encoder.net.layers(removeIdx).name};
+            encoder.net.removeLayer(removeName);
+
+            encoder.net = net_deploy(encoder.net);
+            encoder.net.removeLayer('prob')
+        end
+
+        % move to the device
+        if opts.useGpu, device = 'gpu'; else device = 'cpu'; end
+        encoder.net = net_move_to_device(encoder.net, device);
+
+        input = encoder.net.getOutputs{1};
+
+        % initialize the network
+
+        encoder.method = opts.method;
+        encoder.bpMethod = opts.bpMethod;
+        encoder.pow = opts.pow;
+        myBlock = SqrtmPooling('normalizeGradients', false, ...
+                               'method', encoder.method, ...
+                               'bpMethod', encoder.bpMethod, ...
+                               'sigma', encoder.sigma, ...
+                               'pow', encoder.pow, ...
+                               'maxIter', encoder.maxIter);
+        output = {'b_1', 'svd_u', 'svd_d'};
+
+        % Add bilinearpool layer
+        layerName = 'bilr_1';
+        encoder.net.addLayer(layerName, myBlock, input, output);
+
+        % power normalization layer
+        layerName = sprintf('sqrt_1');
+        input = output;
+        output = 's_1';
+        encoder.net.addLayer(layerName, SilenceWrapper('blockType', ...
+             'PowerNorm', 'fanIn', 1, 'params', {'pow', 0.5}), input, output);
+
+
+        % L2 normalization layer
+        layerName = 'l2_1';
+        input = output;
+        bpoutput = 'l_1';
+        encoder.net.addLayer(layerName, L2Norm(), {input}, bpoutput);
+
+        if isa(encoder.net, 'dagnn.DagNN')
+            encoder.net.mode = 'test';
+            if opts.useGpu
+                encoder.net.move('gpu');
+            end
+        else
+            encoder.net = vl_simplenn_tidy(encoder.net);
+            if opts.useGpu
+                encoder.net.useGpu = true;
+            end
+        end
 end
 
+encoder.net.meta.normalization.border = opts.border;
+
 switch opts.type
-  case {'rcnn', 'bcnn'}
+  case {'rcnn', 'bcnn', 'impbcnn'}
     return ;
 end
 
