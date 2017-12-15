@@ -3,7 +3,7 @@
 Created by Tsung-Yu Lin, Aruni RoyChowdhury and Subhransu Maji at UMass Amherst
 ### Introduction
 
-This repository contains the code for reproducing the results in ICCV 2015 paper:
+This repository contains the code for reproducing the results in B-CNN [ICCV 2015] and Improved B-CNN [BMVC 2017] papers:
 
 	@inproceedings{lin2015bilinear,
         Author = {Tsung-Yu Lin, Aruni RoyChowdhury, and Subhransu Maji},
@@ -11,8 +11,14 @@ This repository contains the code for reproducing the results in ICCV 2015 paper
         Booktitle = {International Conference on Computer Vision (ICCV)},
         Year = {2015}
     }
+    
+    @inproceedings{lin2017impbcnn,
+	Author = {Tsung-Yu Lin, and Subhransu Maji},
+	Booktitle = {British Machine Vision Conference (BMVC)},
+	Title = {Improved Bilinear Pooling with CNNs},
+	Year = {2017}}
 	
-The code is tested on Ubuntu 14.04 using NVIDIA  Titan X GPU and MATLAB R2014b. Recently, we have upgraded the code to support **dag** implementation. Meanwhile, the implementation of bilinear pooling layers and our customized layers are wrapped into a separate [bcnn-package](https://bitbucket.org/tsungyu/bcnn-package).
+The code is tested on Ubuntu 14.04 using NVIDIA  Titan X GPU and MATLAB R2014b. The recent release on 12/15/17 includes the implementation of our BMVC paper using matrix normalization. The implementation of bilinear pooling layers and matirx normalization layers are wrapped into a separate [bcnn-package](https://bitbucket.org/tsungyu/bcnn-package).
 
 Link to the [project page](http://vis-www.cs.umass.edu/bcnn).
 
@@ -40,10 +46,10 @@ This code depends on [VLFEAT](http://www.vlfeat.org) and [MatConvNet](http://www
 	>> git submodule init
 	>> git submodule update
 
-Follow instructions on [VLFEAT](http://www.vlfeat.org) and [MatConvNet](http://www.vlfeat.org/matconvnet) project pages to install them first. Our code is built on MatConvNet version `1.0-beta18`. To retrieve a particular version of MatConvNet using git, cd to MatConvNet folder and type:
+Follow instructions on [VLFEAT](http://www.vlfeat.org) and [MatConvNet](http://www.vlfeat.org/matconvnet) project pages to install them first. Our code is built on MatConvNet version `1.0-beta19`. To retrieve a particular version of MatConvNet using git, cd to MatConvNet folder and type:
 
 	>> git fetch --tags
-	>> git checkout tags/v1.0-beta18
+	>> git checkout tags/v1.0-beta19
       
 Once these are installed edit the `setup.m` to run the corresponding `setup` scripts.
 
@@ -54,7 +60,7 @@ The implementation of the bilinear combination layer in symmetic and assymetic C
 
 **ImageNet LSVRC 2012 pre-trained models:** We use vgg-m and vgg-verydeep-16 as our basic models. The format of pre-trained models on MatConvnet has evolved continuously. In this project, we use the models in version beta18. Please download the models from matconvnet [pre-trained models](http://www.vlfeat.org/matconvnet/models/beta18/).
 
-**Fine-tuned models:** We provide three B-CNN fine-trained models ([M,M], [D,M], and [D,D]) and SVM models trained on respective bcnn features for each of CUB-200-2011, FGVC Aircraft and Cars dataset. Note that for [M,M] and [D,D], we run the symmetric model, where you can simply use the same network for both two streams. These can be downloaded individually [here](http://maxwell.cs.umass.edu/bcnn/models2). 
+**Fine-tuned models:** We provide three B-CNN fine-trained models ([M,M], [D,M], and [D,D]) and SVM models trained on respective bcnn features for each of CUB-200-2011, FGVC Aircraft and Cars dataset. These can be downloaded individually [here](http://maxwell.cs.umass.edu/bcnn/models2). The fine-tuned models for B-CNN with matrix square-root normalization will be added soon.
 
 
 You can also download all the model files as a tar.gz [here](http://maxwell.cs.umass.edu/bcnn/models2.tar.gz).
