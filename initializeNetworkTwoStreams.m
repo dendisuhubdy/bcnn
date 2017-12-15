@@ -16,131 +16,94 @@ numClass = length(imdb.classes.name);
 assert(~isempty(encoderOpts.modela) && ~isempty(encoderOpts.modelb), 'Error: at least one of the network is not specified')
 
 % load the pre-trained models
-encoder.neta = load(encoderOpts.modela);
-encoder.neta.layers = encoder.neta.layers(1:encoderOpts.layera);
-encoder.netb = load(encoderOpts.modelb);
-encoder.netb.layers = encoder.netb.layers(1:encoderOpts.layerb);
-encoder.regionBorder = 0.05;
-encoder.type = 'bcnn';
-encoder.normalization = 'sqrt_L2';
+neta = load(encoderOpts.modela);
+netb = load(encoderOpts.modelb);
 
-% move models to GPU
-if ~isempty(opts.useGpu)
-    encoder.neta = vl_simplenn_move(encoder.neta, 'gpu') ;
-    encoder.netb = vl_simplenn_move(encoder.netb, 'gpu') ;
-else
-    encoder.neta = vl_simplenn_move(encoder.neta, 'cpu') ;
-    encoder.netb = vl_simplenn_move(encoder.netb, 'cpu') ;
+% load the base network A
+if isfield(neta, 'params')
+    neta = dagnn.DagNN.loadobj(neta);
 end
-for l=numel(encoder.neta.layers):-1:1
-    if strcmp(encoder.neta.layers{l}.type, 'conv')
-        encoder.neta.layers{l}.opts = {'CudnnWorkspaceLimit', opts.cudnnWorkspaceLimit};
-    end
-end
-for l=numel(encoder.netb.layers):-1:1
-    if strcmp(encoder.netb.layers{l}.type, 'conv')
-        encoder.netb.layers{l}.opts = {'CudnnWorkspaceLimit', opts.cudnnWorkspaceLimit};
-    end
+if ~isa(neta, 'dagnn.DagNN')
+    neta = dagnn.DagNN.fromSimpleNN(neta, 'canonicalNames', true);
 end
 
-% get the feature dimension for both layers
-netaInfo = vl_simplenn_display(encoder.neta);
-netbInfo = vl_simplenn_display(encoder.netb);
-ch1 = netaInfo.dataSize(3, encoderOpts.layera+1);
-ch2 = netbInfo.dataSize(3, encoderOpts.layerb+1);
-dim = ch1*ch2;
-
-
-% add batch normalization layers
-% ------------------------------------------------------------------------------------
-if opts.batchNormalization
-    for l=numel(encoder.neta.layers):-1:1
-        if isfield(encoder.neta.layers{l}, 'weights')
-            ndim = size(encoder.neta.layers{l}.weights{1}, 4);
-            
-            
-            layer = struct('type', 'bnorm', 'name', sprintf('bna%s',l), ...
-                'weights', {{ones(ndim, 1, 'single'), zeros(ndim, 1, 'single'), [zeros(ndim, 1, 'single'), ones(ndim, 1, 'single')]}}, ...
-                'learningRate', [2 1 0.05], ...
-                'weightDecay', [0 0]) ;
-            
-            encoder.neta.layers = horzcat(encoder.neta.layers(1:l), layer, encoder.neta.layers(l+1:end)) ;
-            
-        end
-        encoder.neta = simpleRemoveLayersOfType(encoder.neta,'lrn');
-    end
-    
-    
-    for l=numel(encoder.netb.layers):-1:1
-        if isfield(encoder.netb.layers{l}, 'weights')
-            ndim = size(encoder.netb.layers{l}.weights{1}, 4);
-            
-            layer = struct('type', 'bnorm', 'name', sprintf('bnb%s',l), ...
-                'weights', {{ones(ndim, 1, 'single'), zeros(ndim, 1, 'single'), [zeros(ndim, 1, 'single'), ones(ndim, 1, 'single')]}}, ...
-                'learningRate', [2 1 0.05], ...
-                'weightDecay', [0 0]) ;
-            
-            encoder.netb.layers = horzcat(encoder.netb.layers(1:l), layer, encoder.netb.layers(l+1:end)) ;
-            
-        end
-    end
-    
-    encoder.netb = simpleRemoveLayersOfType(encoder.netb,'lrn');
+% load the base network B
+if isfield(netb, 'params')
+    netb = dagnn.DagNN.loadobj(netb);
 end
-% ------------------------------------------------------------------------------------
+if ~isa(netb, 'dagnn.DagNN')
+    netb = dagnn.DagNN.fromSimpleNN(netb, 'canonicalNames', true);
+end
+
+% truncate the neta and get the feature dimension
+o1_name = neta.layers(encoderOpts.layera).outputs{1};
+executeOrder = neta.getLayerExecutionOrder();
+maxIndex = find(executeOrder == encoderOpts.layera);
+removeIdx = executeOrder(maxIndex+1:end);
+removeName = {neta.layers(removeIdx).name};
+neta.removeLayer(removeName);
+inputName = neta.getInputs();
+varSize = neta.getVarSizes({inputName, [neta.meta.normalization.imageSize, 1]});
+varIndex1 = neta.getVarIndex(o1_name);
+mapSize1 = varSize{varIndex1}(3);
+
+% rename the input to the canonical name
+inputName = neta.getInputs();
+if ~strcmp(inputName, 'input')
+    neta.renameVar(inputName, 'input');
+end
+
+% truncate the netb and get the feature dimension
+o2_name = netb.layers(encoderOpts.layerb).outputs{1};
+executeOrder = netb.getLayerExecutionOrder();
+maxIndex = find(executeOrder == encoderOpts.layerb);
+removeIdx = executeOrder(maxIndex+1:end);                                                                               removeName = {netb.layers(removeIdx).name};
+netb.removeLayer(removeName);
+inputName = netb.getInputs();
+varSize = netb.getVarSizes({inputName, [netb.meta.normalization.imageSize, 1]});
+varIndex2 = netb.getVarIndex(o2_name);
+mapSize2 = varSize{varIndex2}(3);
+
+% rename the input to the canonical name
+inputName = netb.getInputs();
+if ~strcmp(inputName, 'input')
+    netb.renameVar(inputName, 'input');
+end
 
 
-
-% transform network to dagnn
-% ------------------------------------------------------------------------------------
-net = dagnn.DagNN();
-net = net.fromSimpleNN(encoder.neta, 'CanonicalNames', true);
-meta.meta1 = encoder.neta.meta;
-
-netb = dagnn.DagNN();
-netb = netb.fromSimpleNN(encoder.netb, 'CanonicalNames', true);
-meta.meta2 = encoder.netb.meta;
+% create the network
+net = dagnn.DagNN.loadobj(neta);
+meta.meta1 = neta.meta;
+meta.meta2 = netb.meta;
 
 net.meta = meta;
 
 net.meta.meta1.normalization.keepAspect = opts.keepAspect;
 net.meta.meta2.normalization.keepAspect = opts.keepAspect;
+net.meta.meta1.normalization.border = opts.border;
+net.meta.meta2.normalization.border = opts.border;
 
 for i=1:numel(netb.layers)
     layerName = strcat('netb_', netb.layers(i).name);
     input = strcat('netb_', netb.layers(i).inputs);
     output = strcat('netb_', netb.layers(i).outputs);
     params = strcat('netb_', netb.layers(i).params);
-    %         net.layers(end+1) = netb.layers(i);
     net.addLayer(layerName, netb.layers(i).block, input, output, params);
-    
+
     for f = 1:numel(params)
         varId = net.getParamIndex(params{f});
         varIdb = netb.getParamIndex(netb.layers(i).params{f});
-        if strcmp(net.device, 'gpu')
-            net.params(varId).value = gpuArray(netb.params(varIdb).value);
-        else
-            net.params(varId).value = netb.params(varIdb).value;
-        end
+        net.params(varId).value = netb.params(varIdb).value;
     end
 end
 
-clear netb
-% ------------------------------------------------------------------------------------
-
-
-% Add bilinearpool layer
-bp_layer = {encoder.neta.layers{end}.name, strcat('netb_', encoder.netb.layers{end}.name)};
-inputLayerIndex = net.getLayerIndex(bp_layer);
-in1 = net.layers(inputLayerIndex(1)).outputs;
-assert(length(in1) == 1);
-in2 = net.layers(inputLayerIndex(2)).outputs;
-assert(length(in2) == 1);
-input = cat(2, in1, in2);
+% add bilinear pool layer
+input = {o1_name, strcat('netb_', o2_name)};
+myBlock = BilinearPooling('normalizeGradients', false);
+dim = mapSize1 * mapSize2;
 layerName = 'bilr_1';
 output = 'b_1';
-net.addLayer(layerName, BilinearClPooling('normalizeGradients', false), ...
-    input, output);
+net.addLayer(layerName, myBlock, input, output);
 
 % Square-root layer
 layerName = sprintf('sqrt_1');
@@ -154,8 +117,6 @@ layerName = 'l2_1';
 input = output;
 bpoutput = 'l_1';
 net.addLayer(layerName, L2Norm(), {input}, bpoutput);
-% ------------------------------------------------------------------------------------
-
 
 % build a linear classifier netc
 initialW = 0.001/scal *randn(1,1,dim, numClass,'single');
@@ -197,6 +158,7 @@ if(opts.bcnnLRinit && ~opts.fromScratch)
             
             useGpu = numel(opts.train.gpus) > 0 ;
             if useGpu
+                gpuDevice(opts.train.gpus(1))
                 net.move('gpu') ;
             end
             
@@ -244,6 +206,9 @@ if(opts.bcnnLRinit && ~opts.fromScratch)
         [netc, info] = cnn_train(netc, bcnndb, @getBatch_bcnn_fromdisk, opts.inittrain, ...
             'conserveMemory', true);
         
+        if opts.inittrain.gpus
+            vl_simplenn_move(netc, 'cpu') ;
+        end
         save(fullfile(opts.expDir, 'initial_fc.mat'), 'netc', '-v7.3') ;
     end
 end
@@ -258,11 +223,7 @@ param(2).value = netc.layers{1}.weights{2};
 net.addLayer(layerName, dagnn.Conv(), {bpoutput}, 'score', {param(1).name param(2).name});
 for f = 1:2,
     varId = net.getParamIndex(param(f).name);
-    if strcmp(net.device, 'gpu')
-        net.params(varId).value = gpuArray(param(f).value);
-    else
-        net.params(varId).value = param(f).value;
-    end
+    net.params(varId).value = param(f).value;
     net.params(varId).learningRate = 1000;
     net.params(varId).weightDecay = 0;
 end
@@ -274,7 +235,6 @@ net.addLayer('top5e', dagnn.Loss('loss', 'topkerror'), {'score','label'}, 'top5e
 clear netc
 
 net.mode = 'normal';
-
 
 if(opts.fromScratch)
     for i=1:numel(net.layers)
@@ -298,14 +258,11 @@ net.meta.meta1.classes.description = imdb.classes.name;
 net.meta.meta2.classes.name = imdb.classes.name;
 net.meta.meta2.classes.description = imdb.classes.name;
 
-% add give border for translation data jittering
-if(~strcmp(opts.dataAugmentation{1}, 'f2') && ~strcmp(opts.dataAugmentation{1}, 'none'))
+% setup the border for translation data jittering
+if(~strcmp(opts.dataAugmentation{1}, 'f1') && ~strcmp(opts.dataAugmentation{1}, 'none'))
     net.meta.meta1.normalization.border = 256 - net.meta.meta1.normalization.imageSize(1:2) ;
     net.meta.meta2.normalization.border = 256 - net.meta.meta2.normalization.imageSize(1:2) ;
 end
-
-
-
 
 function [im,labels] = getBatch_bcnn_fromdisk(imdb, batch)
 % -------------------------------------------------------------------------

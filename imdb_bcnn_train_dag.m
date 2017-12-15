@@ -14,8 +14,6 @@ opts.numFetchThreads = 12 ;
 
 opts = vl_argparse(opts, varargin) ;
 
-
-
 opts.train.batchSize = opts.batchSize ;
 opts.train.numSubBatches = opts.numSubBatches;
 opts.train.numEpochs = opts.numEpochs ;
@@ -26,12 +24,15 @@ opts.train.learningRate = opts.learningRate ;
 opts.train.expDir = opts.expDir ;
 opts.train.sync = true ;
 opts.train.cudnn = true ;
+opts.train.memoryMapFile = opts.memoryMapFile;
 
 
 opts.inittrain.weightDecay = 0 ;
 opts.inittrain.batchSize = 256 ;
+opts.inittrain.numSubBatches = 1;
 opts.inittrain.numEpochs = 300 ;
 opts.inittrain.continue = true ;
+opts.inittrain.gpus = opts.useGpu ;
 
 
 if(isempty(opts.useGpu))
@@ -52,19 +53,26 @@ opts.inittrain.expDir = fullfile(opts.expDir, 'init') ;
 
 encoderOpts = parseEncoder(opts);
 
-simplenn = encoderOpts.shareWeight;
+switch encoderOpts.type
+    case 'bcnn'
+        shareWeights = encoderOpts.shareWeight;
 
-if simplenn
-    % the case with shared weights    
-    initNetFn = @initializeNetworkSharedWeights;
-else
-    % the case with two streams
-    initNetFn = @initializeNetworkTwoStreams;
+        if shareWeights
+            % the case with shared weights    
+            initNetFn = @initializeNetworkSharedWeights;
+        else
+            % the case with two streams
+            initNetFn = @initializeNetworkTwoStreams;
+        end
+        
+    case {'impbcnn'}
+        shareWeights = true;
+        initNetFn = @initializeNonlinearMatrixLayer;
 end
 
 net = initNetFn(imdb, encoderOpts, opts);
     
-if simplenn
+if shareWeights 
     bopts = net.meta.normalization ;
 else
     bopts = net.meta.meta1.normalization ;
@@ -81,12 +89,26 @@ else
   save(imageStatsPath, 'averageImage', 'rgbMean', 'rgbCovariance') ;
 end
 
-
-if simplenn
-    net.meta.normalization.averageImage = rgbMean ;
+% can use mean average rgb values: rgbMean
+% or use different averages rgb values for different pixel: averageImage 
+% or use ImageNet pretrained rgbMean
+if shareWeights 
+    % net.meta.normalization.averageImage = rgbMean ;
+    % net.meta.normalization.averageImage = averageImage;
+    if size(net.meta.normalization.averageImage, 3) ~= 3
+        net.meta.normalization.averageImage = reshape(net.meta.normalization.averageImage, [1, 1, 3]);
+    end
 else
-    net.meta.meta1.normalization.averageImage = rgbMean ;
-    net.meta.meta2.normalization.averageImage = rgbMean ;
+    % net.meta.meta1.normalization.averageImage = rgbMean ;
+    % net.meta.meta2.normalization.averageImage = rgbMean ;
+    % net.meta.meta1.normalization.averageImage = averageImage;
+    % net.meta.meta2.normalization.averageImage = averageImage;
+    if size(net.meta.meta1.normalization.averageImage, 3) ~= 3
+        net.meta.meta1.normalization.averageImage = reshape(net.meta.meta1.normalization.averageImage, [1, 1, 3]);
+    end
+    if size(net.meta.meta2.normalization.averageImage, 3) ~= 3
+        net.meta.meta2.normalization.averageImage = reshape(net.meta.meta2.normalization.averageImage, [1, 1, 3]);
+    end
 end
 
 % -------------------------------------------------------------------------
@@ -96,13 +118,12 @@ end
 [v,d] = eig(rgbCovariance) ;
 
 % setting
-if simplenn    
+if shareWeights 
     train_bopts = net.meta.normalization;
     train_bopts.numThreads = opts.numFetchThreads ;
     val_bopts = train_bopts;
     
     train_bopts.transformation = opts.dataAugmentation{1} ;
-    train_bopts.averageImage = rgbMean ;
     if opts.rgbJitter
         train_bopts.rgbVariance = 0.1*sqrt(d)*v' ;
     else
@@ -111,7 +132,6 @@ if simplenn
     train_bopts.scale = opts.imgScale ;
     
     val_bopts.transformation = opts.dataAugmentation{2};
-    val_bopts.averageImage = rgbMean ;
     val_bopts.rgbVariance = [] ;
     val_bopts.scale = opts.imgScale ;
 else
@@ -124,7 +144,6 @@ else
     
     for i=1:numel(train_bopts)
         train_bopts(i).transformation = opts.dataAugmentation{1} ;
-        train_bopts(i).averageImage = rgbMean ;
         if opts.rgbJitter
             train_bopts(i).rgbVariance = 0.1*sqrt(d)*v' ;
         else
@@ -133,7 +152,6 @@ else
         train_bopts(i).scale = opts.imgScale ;
         
         val_bopts(i).transformation = opts.dataAugmentation{2};
-        val_bopts(i).averageImage = rgbMean ;
         val_bopts(i).rgbVariance = [] ;
         val_bopts(i).scale = opts.imgScale ;
     end
@@ -146,20 +164,14 @@ if(~exist(fullfile(opts.expDir, 'fine-tuned-model'), 'dir'))
     mkdir(fullfile(opts.expDir, 'fine-tuned-model'))
 end
 
-if simplenn
-    fn_train = getBatchSimpleNNWrapper(train_bopts) ;
-    fn_val = getBatchSimpleNNWrapper(val_bopts) ;
-    [net,info] = bcnn_train_simplenn(net, imdb, fn_train, fn_val, opts.train, 'conserveMemory', true) ;
-    net = net_deploy(net) ;
-    saveNetwork(fullfile(opts.expDir, 'fine-tuned-model', 'final-model.mat'), net, info);
-else
-    fn_train = getBatchDagNNWrapper(train_bopts, useGpu) ;
-    fn_val = getBatchDagNNWrapper(val_bopts, useGpu) ;
-    opts.train = rmfield(opts.train, {'sync', 'cudnn'}) ;
-    [net, info] = bcnn_train_dag(net, imdb, fn_train, fn_val, opts.train) ;
-    net = net_deploy(net) ;
-    save(fullfile(opts.expDir, 'fine-tuned-model', 'final-model.mat'), 'net', 'info', '-v7.3');
-end
+fn_train = getBatchDagNNWrapper(train_bopts, useGpu) ;
+fn_val = getBatchDagNNWrapper(val_bopts, useGpu) ;
+opts.train = rmfield(opts.train, {'sync', 'cudnn'}) ;
+[net, info] = bcnn_train_dag(net, imdb, fn_train, fn_val, opts.train, ...
+                            'plotStatistics', opts.plotStatistics) ;
+net = net_deploy(net) ;
+save(fullfile(opts.expDir, 'fine-tuned-model', 'final-model.mat'), ...
+    'net', 'info', '-v7.3');
 
 function encoderOpts = parseEncoder(opts)
 
@@ -170,9 +182,15 @@ encoderOpts.layera = 14;
 encoderOpts.modelb = [];
 encoderOpts.layerb = 14;
 encoderOpts.shareWeight = false;
+encoderOpts.model = [];
+encoderOpts.layer = 14;
+encoderOpts.sigma = 0.1;
+encoderOpts.pow = 0.5;
+encoderOpts.method = {};
+encoderOpts.bpMethod = {};
+encoderOpts.maxIter = 5;
 
 encoderOpts = vl_argparse(encoderOpts, opts.encoders{1}.opts);
-
 
 
 % -------------------------------------------------------------------------

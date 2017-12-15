@@ -10,7 +10,7 @@ else
         net = addBilinearSimpleNN(encoder);
     else
         if isa(encoder.neta, 'dagnn.DagNN')
-            idx = find(arrayfun(@(x) isa(x.block, 'BilinearClPooling'), encoder.neta.layers), 1);
+            idx = find(arrayfun(@(x) isa(x.block, 'BilinearClPooling') || isa(x.block, 'BilinearPooling'), encoder.neta.layers), 1);
             assert(~isempty(idx), 'no bilinear layer in the network')
             net = encoder.neta;
         else

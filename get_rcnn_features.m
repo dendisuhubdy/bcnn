@@ -5,6 +5,7 @@ function code = get_rcnn_features(net, im, varargin)
 
 opts.batchSize = 96 ;
 opts.regionBorder = 0.05;
+opts.scales = 1;
 opts = vl_argparse(opts, varargin) ;
 
 if ~iscell(im)
@@ -25,15 +26,31 @@ resetCache() ;
     function flushCache()
         if cache.numCached == 0, return ; end
         images = cat(4, cache.images{:}) ;
-        images = bsxfun(@minus, images, net.meta.normalization.averageImage) ;
-        if net.useGpu
-            images = gpuArray(images) ;
+        % images = bsxfun(@minus, images, net.meta.normalization.averageImage) ;
+        images = bsxfun(@minus, images, averageColor) ;
+        
+        isDag = isa(net, 'dagnn.DagNN');
+        if isDag
+            if strcmp(net.device, 'gpu')
+                images = gpuArray(images);
+            end
+            inputName = net.getInputs();
+            outputNames = net.getOutputs();
+            input = {inputName{1}, images};
+            outIdx = net.getVarIndex(outputNames{1});
+
+            net.eval(input);
+            code_ = squeeze(gather(net.vars(outIdx).value));
+        else
+            if net.useGpu
+                images = gpuArray(images) ;
+            end
+            res = vl_simplenn(net, images, ...
+                            [], res, ...
+                            'conserveMemory', true, ...
+                            'sync', true) ;
+            code_ = squeeze(gather(res(end).x)) ;
         end
-        res = vl_simplenn(net, images, ...
-                        [], res, ...
-                        'conserveMemory', true, ...
-                        'sync', true) ;
-        code_ = squeeze(gather(res(end).x)) ;
         code_ = bsxfun(@times, 1./sqrt(sum(code_.^2)), code_) ;
         for q=1:cache.numCached
             code{cache.indexes(q)} = code_(:,q) ;
@@ -50,37 +67,41 @@ resetCache() ;
         end
     end
 
+    if opts.scales == 1
+        averageColor = net.meta.normalization.averageImage ;
+    else
+        averageColor = mean(mean(net.meta.normalization.averageImage, 1), 2);
+    end
     code = {} ;
     for k=1:numel(im)
-        appendCache(k, getImage(opts, single(im{k}), net.meta.normalization.imageSize(1), net.meta.normalization.keepAspect));
+        appendCache(k, getImage(opts, single(im{k}), ...
+                net.meta.normalization.imageSize, ...
+                net.meta.normalization.keepAspect, opts.scales, ...
+                net.meta.normalization.border));
     end
     flushCache() ;
 end
 
 % -------------------------------------------------------------------------
-function reg = getImage(opts, im, regionSize, keepAspect)
+function reg = getImage(opts, im, regionSize, keepAspect, scale, border)
 % -------------------------------------------------------------------------
- 
-    if keepAspect
-        w = size(im,2) ;
-        h = size(im,1) ;
-        factor = [regionSize/h,regionSize/w];
-        
-        
-        factor = max(factor);
-        %if any(abs(factor - 1) > 0.0001)
-        
-        im_resized = imresize(im, ...
-            'scale', factor, ...
-            'method', 'bicubic') ;
-        %end
-        
-        w = size(im_resized,2) ;
-        h = size(im_resized,1) ;
-        
-        reg = imcrop(im_resized, [fix((w-regionSize)/2)+1, fix((h-regionSize)/2)+1,...
-            round(regionSize)-1, round(regionSize)-1]);
-    else
-        reg = imresize(im, [regionSize, regionSize], 'bicubic') ;
-    end
+
+w = size(im,2) ;
+h = size(im,1) ;
+factor = [(regionSize(1)+border(1))/h, (regionSize(2)+border(2))/w]*scale;
+
+if keepAspect
+    factor = max(factor);
 end
+
+reg = imresize(single(im), ...
+    'scale', factor, ...
+    'method', 'bilinear') ;
+
+w = size(reg, 2) ;
+h = size(reg, 1) ;
+
+reg = imcrop(reg, [fix((w-regionSize(1)*scale)/2)+1, fix((h-regionSize(2)*scale)/2)+1,...
+    round(regionSize(1)*scale)-1, round(regionSize(2)*scale)-1]);
+end
+

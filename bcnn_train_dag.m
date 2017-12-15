@@ -42,6 +42,7 @@ opts.momentum = 0.9 ;
 opts.derOutputs = {'objective', 1} ;
 opts.memoryMapFile = fullfile(tempdir, 'matconvnet.bin') ;
 opts.extractStatsFn = @extractStats ;
+opts.plotStatistics = true;
 opts = vl_argparse(opts, varargin) ;
 
 if ~exist(opts.expDir, 'dir'), mkdir(opts.expDir) ; end
