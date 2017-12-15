@@ -490,35 +490,38 @@ switch opts.type
         input = encoder.net.getOutputs{1};
 
         % initialize the network
-
-        encoder.method = opts.method;
-        encoder.bpMethod = opts.bpMethod;
-        encoder.pow = opts.pow;
-        myBlock = SqrtmPooling('normalizeGradients', false, ...
-                               'method', encoder.method, ...
-                               'bpMethod', encoder.bpMethod, ...
-                               'sigma', encoder.sigma, ...
-                               'pow', encoder.pow, ...
-                               'maxIter', encoder.maxIter);
-        output = {'b_1', 'svd_u', 'svd_d'};
-
-        % Add bilinearpool layer
-        layerName = 'bilr_1';
-        encoder.net.addLayer(layerName, myBlock, input, output);
-
-        % power normalization layer
-        layerName = sprintf('sqrt_1');
-        input = output;
-        output = 's_1';
-        encoder.net.addLayer(layerName, SilenceWrapper('blockType', ...
-             'PowerNorm', 'fanIn', 1, 'params', {'pow', 0.5}), input, output);
-
-
-        % L2 normalization layer
-        layerName = 'l2_1';
-        input = output;
-        bpoutput = 'l_1';
-        encoder.net.addLayer(layerName, L2Norm(), {input}, bpoutput);
+        if isnan(encoder.net.getLayerIndex('bilr_1'))
+            
+            encoder.method = opts.method;
+            encoder.bpMethod = opts.bpMethod;
+            encoder.pow = opts.pow;
+            myBlock = SqrtmPooling('normalizeGradients', false, ...
+                'method', encoder.method, ...
+                'bpMethod', encoder.bpMethod, ...
+                'sigma', encoder.sigma, ...
+                'pow', encoder.pow, ...
+                'maxIter', encoder.maxIter);
+            output = {'b_1', 'svd_u', 'svd_d'};
+            
+            % Add bilinearpool layer
+            layerName = 'bilr_1';
+            encoder.net.addLayer(layerName, myBlock, input, output);
+            
+            % power normalization layer
+            layerName = sprintf('sqrt_1');
+            input = output;
+            output = 's_1';
+            encoder.net.addLayer(layerName, SilenceWrapper('blockType', ...
+                'PowerNorm', 'fanIn', 1, 'params', {'pow', 0.5}), input, output);
+            
+            
+            % L2 normalization layer
+            layerName = 'l2_1';
+            input = output;
+            bpoutput = 'l_1';
+            encoder.net.addLayer(layerName, L2Norm(), {input}, bpoutput);
+        
+        end
 
         if isa(encoder.net, 'dagnn.DagNN')
             encoder.net.mode = 'test';
