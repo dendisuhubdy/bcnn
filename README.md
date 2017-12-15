@@ -153,7 +153,7 @@ Here are the steps to fine-tuning a B-CNN [M,M] model on the CUB dataset:
 1. Download `imagenet-vgg-m` model (see link above)
 1. Set the path of the model in `run_experiments_bcnn_train.m`. For example, set PRETRAINMODEL='data/model/imagenet-vgg-m.mat', to use the Oxford's VGG-M model trained on ImageNet LSVRC 2012 dataset. You also have to set the `bcnnmm.opts` to:
 
-        bcnnmm.opts = {..
+        bcnnmm.opts = {...
            'type', 'bcnn', ...
            'modela', PRETRAINMODEL, ...
            'layera', 14,...
@@ -166,7 +166,7 @@ Here are the steps to fine-tuning a B-CNN [M,M] model on the CUB dataset:
 
 1. Once the fine-tuning is complete, you can train a linear SVM on the extracted features to evaluate the model. See `run_experiments.m` for training/testing using SVMs. You can simply set the MODELPATH to the location of the fine-tuned model by setting MODELPATH='data/ft-models/bcnn-cub-mm.mat' and the `bcnnmm.opts` to:
 
-        bcnnmm.opts = {..
+        bcnnmm.opts = {...
            'type', 'bcnn', ...
            'modela', MODELPATH, ...
            'layera', [],...
@@ -192,7 +192,7 @@ Here are the steps to fine-tuning a B-CNN [M,M] model on the CUB dataset:
            'maxIter', 5, ... % used for 'schulz' only
         } ;
         
-	The option `method` specifies the approach to compte the matrix-square root. The `svd`  approach computes the matrix square-root by taking the square-root of eigenvalues and the svd matrices are cached for backward compuation. Thh fast approximation `schulz` by solving Newton iteration is an order-of-magnitude faster during forward pass. However, the backward still requires svd computation and offer no benefit in efficiency during training phase.
+	The option `method` specifies the approach to compute the matrix-square root. The `svd`  approach computes the matrix square-root by taking the square-root of eigenvalues and the svd matrices are cached for backward compuation. Thh fast approximation `schulz` by solving Newton iteration is an order-of-magnitude faster during forward pass. However, the backward still requires svd computation and offer no benefit in efficiency during training phase.
     
 1. Once the fine-tuning is complete, you can train a linear SVM on the extracted features to evaluate the model. See `run_experiments.m` for training/testing using SVMs. You can simply set the MODELPATH to the location of the fine-tuned model and set the `impbcnnmm.opts` to:
 
