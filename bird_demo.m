@@ -1,7 +1,7 @@
 function bird_demo(varargin)
 setup;
 % Default options
-opts.model = 'data/ft_models/bcnn-cub-dm.mat';
+opts.model = 'data/ft_models/final-model.mat';
 opts.cubDir = 'data/cub';
 opts.useGpu = false;
 opts.svmPath = fullfile('data', 'models','svm_cub_vdm.mat');
@@ -38,6 +38,10 @@ fprintf('%.2fs to load models into memory.\n', toc);
 
 tic;
 % Compute B-CNN feature for this image
+if isa(net, 'dagnn.DagNN')
+    net.mode = 'test';
+    net.vars(net.getVarIndex('l_1')).precious = 1;
+end
 code = get_bcnn_features(net, im, ...
         'regionBorder', opts.regionBorder, ...
         'normalization', opts.normalization);
