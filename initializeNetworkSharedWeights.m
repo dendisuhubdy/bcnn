@@ -21,58 +21,92 @@ assert(~isempty(encoderOpts.modela), 'network is not specified');
 % Load the model
 net = load(encoderOpts.modela);
 net.meta.normalization.keepAspect = opts.keepAspect;
+net.meta.normalization.border = opts.border;
+
+% check if the network is a dagnn
+if isfield(net, 'params')
+    net = dagnn.DagNN.loadobj(net);
+end
+isDag = isa(net, 'dagnn.DagNN');
 
 % truncate the network
 maxLayer = max(encoderOpts.layera, encoderOpts.layerb);
-net.layers = net.layers(1:maxLayer);
+if isDag
+    o1_name = net.layers(encoderOpts.layera).outputs{1};
+    o2_name = net.layers(encoderOpts.layerb).outputs{1};
 
-% get the feature dimension for both layers
-netInfo = vl_simplenn_display(net);
-mapSize1 = netInfo.dataSize(3, encoderOpts.layera+1);
-mapSize2 = netInfo.dataSize(3, encoderOpts.layerb+1);
+    executeOrder = net.getLayerExecutionOrder();
+    maxIndex = find(executeOrder == maxLayer);
+    removeIdx = executeOrder(maxIndex+1:end);
+    removeName = {net.layers(removeIdx).name};
+    net.removeLayer(removeName);
 
-% network setting
-net = vl_simplenn_tidy(net) ;
-for l=numel(net.layers):-1:1
-    if strcmp(net.layers{l}.type, 'conv')
-        net.layers{l}.opts = {'CudnnWorkspaceLimit', opts.cudnnWorkspaceLimit};
+    inputName = net.getInputs();
+    varSize = net.getVarSizes({inputName, [net.meta.normalization.imageSize, 1]});
+
+    varIndex1 = net.getVarIndex(o1_name);
+    varIndex2 = net.getVarIndex(o2_name);
+
+    mapSize1 = varSize{varIndex1}(3);
+    mapSize2 = varSize{varIndex2}(3);
+
+
+    inputName = net.getInputs();
+    if ~strcmp(inputName, 'input')
+        net.renameVar(inputName, 'input');
     end
-end
+else
+    net.layers = net.layers(1:maxLayer);
+    % get the feature dimension for both layers
+    netInfo = vl_simplenn_display(net);
+    mapSize1 = netInfo.dataSize(3, encoderOpts.layera+1);
+    mapSize2 = netInfo.dataSize(3, encoderOpts.layerb+1);
 
-% add batch normalization
-if opts.batchNormalization
+    % network setting
+    net = vl_simplenn_tidy(net) ;
     for l=numel(net.layers):-1:1
-        if isfield(net.layers{l}, 'weights')
-            ndim = size(net.layers{l}.weights{1}, 4);
-            
-            layer = struct('type', 'bnorm', 'name', sprintf('bn%s',l), ...
-                'weights', {{ones(ndim, 1, 'single'), zeros(ndim, 1, 'single'), [zeros(ndim, 1, 'single'), ones(ndim, 1, 'single')]}}, ...
-                'learningRate', [2 1 0.05], ...
-                'weightDecay', [0 0]) ;
-            
-            
-            net.layers = horzcat(net.layers(1:l), layer, net.layers(l+1:end)) ;
-            
+        if strcmp(net.layers{l}.type, 'conv')
+            net.layers{l}.opts = {'CudnnWorkspaceLimit', opts.cudnnWorkspaceLimit};
         end
     end
-    net = simpleRemoveLayersOfType(net,'lrn');
+
+    l1_name = net.layers{encoderOpts.layera}.name;
+    l2_name = net.layers{encoderOpts.layerb}.name;
+    net = dagnn.DagNN.fromSimpleNN(net, 'canonicalNames', true);
+    o1_name = net.layers(net.getLayerIndex(l1_name)).outputs{1};
+    o2_name = net.layers(net.getLayerIndex(l2_name)).outputs{1};
 end
 
-
-% stack bilinearpool layer
-if(encoderOpts.layera==encoderOpts.layerb)
-    net.layers{end+1} = struct('type', 'bilinearpool', 'name', 'blp');
+% add a bilinearpooling layer    
+if strcmp(o1_name, o2_name)
+    inputNames = {o1_name};
 else
-    net.layers{end+1} = struct('type', 'bilinearclpool', 'layer1', encoderOpts.layera, 'layer2', encoderOpts.layerb, 'name', 'blcp');
+    inputNames = {o1_name, o2_name};
 end
 
-% stack normalization
-net.layers{end+1} = struct('type', 'sqrt', 'name', 'sqrt_norm');
-net.layers{end+1} = struct('type', 'l2norm', 'name', 'l2_norm');
+myBlock = BilinearPooling('normalizeGradients', false);
+dim = mapSize1 * mapSize2;
+paramNames = {};
 
+output = 'b_1';
+net.addLayer('bilr_1', myBlock, ...
+    inputNames, output, paramNames);
+
+% Square-root layer
+layerName = sprintf('sqrt_1');
+input = output;
+output = 's_1';
+net.addLayer(layerName, SquareRoot(), {input}, output);
+
+
+% L2 normalization layer
+layerName = 'l2_1';
+input = output;
+bpoutput = 'l_1';
+net.addLayer(layerName, L2Norm(), {input}, bpoutput);
 
 % build a linear classifier netc
-initialW = 0.001/scal * randn(1,1,mapSize1*mapSize2,numClass,'single');
+initialW = 0.001/scal *randn(1,1,dim, numClass,'single');
 initialBias = init_bias.*ones(1, numClass, 'single');
 netc.layers = {};
 netc.layers{end+1} = struct('type', 'conv', 'name', 'classifier', ...
@@ -91,11 +125,7 @@ if(opts.bcnnLRinit && ~opts.fromScratch)
     % get bcnn feature for train and val sets
     train = find(imdb.images.set==1|imdb.images.set==2);
     if ~exist(opts.nonftbcnnDir, 'dir')
-        netInit = net;
-        
-        if ~isempty(opts.train.gpus)
-            netInit = vl_simplenn_move(netInit, 'gpu') ;
-        end
+        mkdir(opts.nonftbcnnDir)
         
         batchSize = 64;
         
@@ -104,44 +134,49 @@ if(opts.bcnnLRinit && ~opts.fromScratch)
         bopts.transformation = 'none' ;
         bopts.rgbVariance = [] ;
         bopts.scale = opts.imgScale;
+
+        useGpu = numel(opts.train.gpus) > 0 ;
+        if useGpu
+            gpuDevice(opts.train.gpus(1))
+            net.move('gpu') ;
+        end
         
-        
-        getBatchFn = getBatchSimpleNNWrapper(bopts);
-        
-        mkdir(opts.nonftbcnnDir)
+        getBatchFn = getBatchDagNNWrapper(bopts);
         
         % compute and cache the bilinear cnn features
         for t=1:batchSize:numel(train)
             fprintf('Initialization: extracting bcnn feature of batch %d/%d\n', ceil(t/batchSize), ceil(numel(train)/batchSize));
             batch = train(t:min(numel(train), t+batchSize-1));
-            [im, labels] = getBatchFn(imdb, batch) ;
+
+            input = getBatchFn(imdb, batch) ;
             if opts.train.prefetch
                 nextBatch = train(t+batchSize:min(t+2*batchSize-1, numel(train))) ;
-                getBatcFn(imdb, nextBatch) ;
+                getBatchFn(imdb, nextBatch) ;
             end
-            im = im{1};
-            if ~isempty(opts.train.gpus)
-                im = gpuArray(im) ;
-            end
-            
-            net.layers{end}.class = labels ;
-            
-            res = [] ;
-            res = vl_bilinearnn(netInit, im, [], res, ...
-                'accumulate', false, ...
-                'mode', 'test', ...
-                'conserveMemory', true, ...
-                'sync', true, ...
-                'cudnn', opts.cudnn) ;
-            codeb = squeeze(gather(res(end).x));
+
+            input = input(1:end-2);
+            net.mode = 'test' ;
+            net.eval(input);
+            fIdx = net.getVarIndex('l_1');
+            code_b = net.vars(fIdx).value;
+            code_b = squeeze(gather(code_b));
+
             for i=1:numel(batch)
-                code = codeb(:,i);
+                code = code_b(:,i);
                 savefast(fullfile(opts.nonftbcnnDir, ['bcnn_nonft_', num2str(batch(i), '%05d')]), 'code');
+            end
+        end
+
+        % move back to cpu
+        if useGpu
+            net.move('cpu');
+            if cptsLayeIdx
+                net.layers(cptsLayeIdx).block.move2CPU();
             end
         end
     end
     
-    clear code res netInit
+    clear code 
     
     % get the pretrain linear classifier
     if exist(fullfile(opts.expDir, 'initial_fc.mat'), 'file')
@@ -166,21 +201,42 @@ if(opts.bcnnLRinit && ~opts.fromScratch)
     
 end
 
+% Initial the classifier to the pretrained weights
+layerName = 'classifier';
+param(1).name = 'convclass_f';
+param(1).value = netc.layers{1}.weights{1};
+param(2).name = 'convattr_b';
+param(2).value = netc.layers{1}.weights{2};
+net.addLayer(layerName, dagnn.Conv(), {bpoutput}, 'score', {param(1).name param(2).name});
+for f = 1:2,
+    varId = net.getParamIndex(param(f).name);
+    net.params(varId).value = param(f).value;
+    net.params(varId).learningRate = 1000;
+    net.params(varId).weightDecay = 0;
+end
+
+% add loss functions
+net.addLayer('loss', dagnn.Loss('loss', 'softmaxlog'), {'score','label'}, 'objective');
+net.addLayer('error', dagnn.Loss('loss', 'classerror'), {'score','label'}, 'top1error');                                net.addLayer('top5e', dagnn.Loss('loss', 'topkerror'), {'score','label'}, 'top5error');
+clear netc
+
+net.mode = 'normal';
+
 % set all parameters to random number if train the model from scratch
 if(opts.fromScratch)
     for i=1:numel(net.layers)
-        if ~strcmp(net.layers{i}.type, 'conv'), continue ; end
-        net.layers{i}.learningRate = [1 2];
-        net.layers{i}.weightDecay = [1 0];
-        net.layers{i}.weights = {0.01/scal * randn(size(net.layers{i}.weights{1}), 'single'), init_bias*ones(size(net.layers{i}.weights{2}), 'single')};
+        if ~isa(net.layers(i).block, 'dagnn.Conv'), continue ; end
+        for j=1:numel(net.layers(i).params)
+            paramIdx = net.getParamIndex(net.layers(i).params{j});
+            if ndims(net.params(paramIdx).value) == 2
+                net.params(paramIdx).value = init_bias*ones(size(net.params(paramIdx).value), 'single');
+            else
+                net.params(paramIdx).value = 0.01/scal * randn(net.params(paramIdx).value, 'single');
+            end
+        end
     end
 end
 
-% stack netc on network
-for i=1:numel(netc.layers)
-    net.layers{end+1} = netc.layers{i};
-end
-clear netc
 
 % Rename classes
 net.meta.classes.name = imdb.classes.name;
