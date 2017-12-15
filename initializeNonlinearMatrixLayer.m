@@ -61,13 +61,7 @@ else
     o1_name = net.layers(net.getLayerIndex(l1_name)).outputs{1};
 end
 
-
-cptsLayeIdx = 0;
-
 inputNames = {o1_name};
-if cptsLayeIdx
-    cptsLayeIdx = net.getLayerIndex('bilr_1');
-end
 
 paramNames = {};
 myBlock = SqrtmPooling('normalizeGradients', false, ...
@@ -132,10 +126,8 @@ if(opts.bcnnLRinit && ~opts.fromScratch)
         
         useGpu = numel(opts.train.gpus) > 0 ;
         if useGpu
+            gpuDevice(opts.train.gpus(1))
             net.move('gpu') ;
-            if cptsLayeIdx
-                net.layers(cptsLayeIdx).block.move2GPU(zeros(1, 'gpuArray'));
-            end
         end
         getBatchFn = getBatchDagNNWrapper(bopts, useGpu) ;
         
@@ -164,9 +156,6 @@ if(opts.bcnnLRinit && ~opts.fromScratch)
         % move back to cpu
         if useGpu
             net.move('cpu');
-            if cptsLayeIdx
-                net.layers(cptsLayeIdx).block.move2CPU();
-            end
         end
     end
     
