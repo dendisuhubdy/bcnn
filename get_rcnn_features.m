@@ -26,7 +26,8 @@ resetCache() ;
     function flushCache()
         if cache.numCached == 0, return ; end
         images = cat(4, cache.images{:}) ;
-        images = bsxfun(@minus, images, net.meta.normalization.averageImage) ;
+        % images = bsxfun(@minus, images, net.meta.normalization.averageImage) ;
+        images = bsxfun(@minus, images, averageColor) ;
         
         isDag = isa(net, 'dagnn.DagNN');
         if isDag
