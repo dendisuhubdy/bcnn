@@ -129,7 +129,7 @@ if(opts.bcnnLRinit && ~opts.fromScratch)
         
         batchSize = 64;
         
-        bopts = netInit.meta.normalization ;
+        bopts = net.meta.normalization ;
         bopts.numThreads = opts.numFetchThreads ;
         bopts.transformation = 'none' ;
         bopts.rgbVariance = [] ;
@@ -141,7 +141,7 @@ if(opts.bcnnLRinit && ~opts.fromScratch)
             net.move('gpu') ;
         end
         
-        getBatchFn = getBatchDagNNWrapper(bopts);
+        getBatchFn = getBatchDagNNWrapper(bopts, useGpu);
         
         % compute and cache the bilinear cnn features
         for t=1:batchSize:numel(train)
@@ -170,9 +170,6 @@ if(opts.bcnnLRinit && ~opts.fromScratch)
         % move back to cpu
         if useGpu
             net.move('cpu');
-            if cptsLayeIdx
-                net.layers(cptsLayeIdx).block.move2CPU();
-            end
         end
     end
     

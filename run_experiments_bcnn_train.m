@@ -71,8 +71,8 @@ train_on_train_val = true;
     'maxIter', 5, ...
     } ;
     
-  encoderList = {{impbcnnvd}}; 
-  datasetList = {{'cub', 1}};  
+  encoderList = {{bcnnvdvd}}; 
+  datasetList = {{'aircraft-variant', 1}};  
 
   for ii = 1 : numel(datasetList)
     dataset = datasetList{ii} ;
@@ -83,26 +83,31 @@ train_on_train_val = true;
       numSplits = 1 ;
     end
     switch dataset
-        case {'cub', 'cars'}
+        case 'cub'
             border = [0, 0];
+            keepAsp = true;
+        case 'cars'
+            border = [0, 0];
+            keepAsp = false;
         case 'aircraft-variant'
             border = [32, 32];
+            keepAsp = false;
     end
     for jj = 1 : numSplits
       for ee = 1: numel(encoderList)
         
           [opts, imdb] = model_setup('dataset', dataset, ...
                             'encoders', encoderList{ee}, ...
-                            'prefix', 'test_impbcnnvd', ...  % output folder name
-                            'batchSize', 64, ...
+                            'prefix', 'bcnnvdvd', ...  % output folder name
+                            'batchSize', 128, ...
                             'imgScale', 2, ...       % specify the scale of input images
                             'bcnnLRinit', true, ...   % do logistic regression to initilize softmax layer
                             'dataAugmentation', {'f1','none','none'},...      % do data augmentation [train, val, test]. Only support flipping for train set on current release.
-                            'useGpu', [1], ...          %specify the GPU to use. 0 for using CPU
+                            'useGpu', [3], ...          %specify the GPU to use. 0 for using CPU
                             'learningRate', 0.001, ...
                             'numEpochs', 40, ...
                             'momentum', 0.9, ...
-                            'keepAspect', true, ...
+                            'keepAspect', keepAsp, ...
                             'printDatasetInfo', true, ...
                             'border', border, ...
                             'printDatasetInfo', true, ...
