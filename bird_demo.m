@@ -1,7 +1,7 @@
 function bird_demo(varargin)
 setup;
 % Default options
-opts.model = 'data/ft_models/final-model.mat';
+opts.model = 'data/models/bcnn-cub-dm.mat';
 opts.cubDir = 'data/cub';
 opts.useGpu = false;
 opts.svmPath = fullfile('data', 'models','svm_cub_vdm.mat');
